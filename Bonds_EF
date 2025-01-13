@@ -1,0 +1,97 @@
+import numpy as np
+import pandas as pd
+import riskfolio as rp
+import xlwings as xw
+import matplotlib.pyplot as plt
+import math
+import os
+
+# Set the working directory
+os.chdir('C://Users//Sandro//OneDrive//Python')
+
+# Load the Excel workbook and sheets
+wb = xw.Book('data.xlsx')
+sh_in = wb.sheets['Sheet3']
+sh_out = wb.sheets['output']
+
+# Read data from the input sheet
+time = sh_in.range('A2').expand('down').value
+GSB = sh_in.range('B2').expand('down').value
+EMD = sh_in.range('D2').expand('down').value
+DMI = sh_in.range('E2').expand('down').value
+DMH = sh_in.range('F2').expand('down').value
+
+data = {
+    "Global Sub Bonds": GSB,
+    "EM Debt (HC)": EMD,
+    "DM IG": DMI,
+    "DM HY": DMH
+}
+
+# Create a DataFrame for returns
+return_df = pd.DataFrame(data, index=time).dropna()
+mean_df = return_df.mean() * 12
+
+# Calculate CVaR for each asset
+CVaR_dic = {asset: rp.RiskFunctions.CVaR_Hist(return_df[asset]) for asset in return_df.columns}
+assets_df = pd.DataFrame({
+    'Mean': mean_df,
+    'CVaR': list(CVaR_dic.values())
+})
+
+# Write asset statistics to the output sheet
+sh_out.range('A1').value = assets_df
+
+# Initialize portfolio optimization
+port = rp.Portfolio(returns=return_df)
+
+# Set methods for expected returns and covariance matrix
+method_mu = 'hist'
+method_cov = 'hist'
+port.assets_stats(method_mu=method_mu, method_cov=method_cov, d=0.94)
+
+# Optimize the portfolio
+model = 'Classic'
+rm = 'CVaR'  # Risk measure
+obj = 'Sharpe'  # Objective function
+rf = 0  # Risk-free rate
+l = 0  # Risk aversion factor
+hist = True  # Use historical scenarios
+
+# Perform optimization
+w = port.optimization(model=model, rm=rm, obj=obj, rf=rf, l=l, hist=hist)
+
+# Display weights and save to the output sheet
+sh_out.range('A7').value = w.T
+
+# Plot pie chart of weights
+rp.plot_pie(w=w, title='Sharpe Mean Variance', others=0.05, nrow=25, cmap="tab20", height=6, width=10)
+
+# Generate the efficient frontier
+points = 50
+frontier = port.efficient_frontier(model=model, rm=rm, points=points, rf=rf, hist=hist)
+
+# Plot the efficient frontier
+label = 'Max Risk Adjusted Return Portfolio'
+mu = port.mu / 19
+cov = port.cov
+returns = port.returns / math.sqrt(19) / math.sqrt(12)
+ax = rp.plot_frontier(w_frontier=frontier, mu=mu, cov=cov, returns=returns, rm=rm, rf=rf, alpha=0.05, cmap='viridis', w=w, label=label, marker='*', s=16, c='r', height=6, width=10)
+
+# Annotate points on the frontier
+for asset in assets_df.index:
+    ax.plot(assets_df.loc[asset, 'CVaR'], assets_df.loc[asset, 'Mean'], "or")
+    ax.annotate(asset, (assets_df.loc[asset, 'CVaR'], assets_df.loc[asset, 'Mean']),
+                (assets_df.loc[asset, 'CVaR'] + 0.002, assets_df.loc[asset, 'Mean'] - 0.003))
+
+# Plot efficient frontier composition
+rp.plot_frontier_area(w_frontier=frontier, cmap="tab20", height=6, width=10)
+
+# Plot histogram of returns
+rp.plot_hist(returns=return_df, w=w, alpha=0.05, bins=50, height=6, width=10)
+
+# Plot clusters
+rp.plot_clusters(returns=return_df, codependence='spearman', linkage='ward', k=None, max_k=10, leaf_order=True, dendrogram=True)
+
+# Export the notebook as HTML
+os.system('jupyter nbconvert --to html Eff.ipynb')
